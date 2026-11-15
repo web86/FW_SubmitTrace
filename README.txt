@@ -20,7 +20,7 @@ FW Submit Trace — временная диагностика SendIt / FormWatch
 4. Настройки MODX: fw_debug_enabled = 1; fw_debug_token = 48 hex символов.
    Очистить кэш MODX.
 5. Подключить до SendIt, без async/defer:
-   <script src="/assets/js/fw-submit-trace.js?v=3"></script>
+   <script src="/assets/js/fw-submit-trace.js?v=4"></script>
    Проверить, что в браузере загрузилась новая версия файла.
 
 Трассировка автоматически включается ТОЛЬКО для /ru/work-with-me и
@@ -33,8 +33,10 @@ FW Submit Trace — временная диагностика SendIt / FormWatch
   submit_capture, submit_bubble, submit_microtask
   si_send_before/after/success/error/finish
   script_error, runtime_error, promise_rejection, pagehide
+  navigation_probe — сетевые метрики HTML-документа при window.load
+  sendit_ready — первый раз, когда SendIt.Sending стал доступен (опрос 250 мс)
   asset_probe — два наблюдения: state=load и state=submit
-  module_probe — девять безопасных записей на каждом этапе (load/submit)
+  module_probe — десять безопасных записей на каждом этапе (load/submit)
     о последовательности импортов SendIt, без запросов или чтения ответа
 
 asset_probe:
@@ -51,12 +53,22 @@ asset_probe:
 
 module_probe (два момента наблюдения, load и submit):
   state          load / submit
-  module         core_main, modules_config, helpers, sessionlogger,
+  module         core_main, di_container, modules_config, helpers, sessionlogger,
                  proofofwork, behaviorsign, sending, notify, saveformdata
   observed       есть ли завершённая Resource Timing запись для модуля
   http_status    ResourceTiming.responseStatus или 0 (0 = нет данных!)
   start_ms       начало запроса по Performance Timeline (ms), 0 если неизвестно
   duration_ms    длительность по Resource Timing (ms), 0 если неизвестно
+  request_ms     время requestStart, отсчитывается от navigation start
+  response_ms    время responseStart, отсчитывается от navigation start
+  end_ms         время responseEnd, отсчитывается от navigation start
+  queue_ms       разница requestStart - startTime (0 = неизвестно/мгновенно)
+  ttfb_ms        разница responseStart - requestStart (0 = неизвестно/мгновенно)
+  download_ms    разница responseEnd - responseStart (0 = неизвестно/мгновенно)
+  transfer_bytes размер переданных данных или 0 (нет данных/кэш)
+  encoded_bytes  размер сжатого содержимого или 0
+  initiator      тип инициатора согласно Resource Timing
+  delivery       тип доставки (если браузер предоставляет)
 
   Модуль определяется по точному pathname внутри /assets/components/
   sendit/js/web/; query-параметры версии игнорируются. Некоторые модули
@@ -69,6 +81,34 @@ module_probe (два момента наблюдения, load и submit):
   консоли или отдельном Worker console trace. Content-Type/MIME нельзя
   достоверно узнать из Resource Timing; проверить через Network headers.
   Сравнивать успешные и неуспешные прогоны по (trace, state, module).
+  Поля request/response/end — абсолютные времена относительно navigationStart,
+  а не миллисекунды друг от друга. "0" не подтверждает ошибку сети.
+  Дополнительные load/submit наблюдения не делают новых сетевых запросов.
+
+navigation_probe:
+  nav_type, nav_total_ms, nav_ttfb_ms, nav_download_ms,
+  nav_transfer_bytes — только доступные Network Timing метрики документа.
+
+sendit_ready:
+  ready_ms, since_load_ms — первая обнаруженная готовность SendIt.Sending.
+  Проверяем раз в 250 мс, не дольше 30 секунд. Отсутствие события не
+  доказывает, что инициализация никогда не завершится; это ограниченный замер.
+
+Сравнение двух проверок (Node.js >= 18, без зависимостей):
+  1. Сохранить core/cache/logs/error.log в локальный файл.
+  2. Найти доступные trace ID:
+     node tools/compare-traces.mjs error.log
+  3. Сравнить одну успешную и одну неудачную проверку:
+     node tools/compare-traces.mjs error.log TRACE_SUCCESS TRACE_FAILURE
+  4. Посмотреть время завершения импорта (end), TTFB, загрузку,
+     отсутствующие модульные записи, si:init и sendit_ready.
+  5. Самотест:
+     node tools/compare-traces.test.mjs
+
+  Анализатор опирается только на логируемые события. Если в успешной
+  проверке не было si_send_success, он НЕ объявит её подтверждённо
+  успешной. Формальный результат проверки следует сверять с FormWatch.
+  Скрипт не читает значения формы, cookie, токены и query string.
 
 Логи:
   grep '\[FW TRACE' core/cache/logs/error.log | tail -n 120
