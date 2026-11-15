@@ -123,6 +123,7 @@ $events = [
     'ready_state',
     'dom_ready',
     'window_load',
+    'asset_probe',
     'si_init',
     'submit_capture',
     'submit_bubble',
@@ -177,6 +178,10 @@ $fields = [
     'cancelled',
     'accepted',
     'script',
+    'index_tag',
+    'index_module',
+    'index_resource',
+    'index_status',
     'persisted',
 ];
 
