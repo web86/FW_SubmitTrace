@@ -22,7 +22,9 @@
   const TARGET_SELECTOR = '[data-si-form="W86CooperationRu"][data-si-preset="w86_cooperation_ru"]';
   const PAGES = new Set(['/ru/work-with-me', '/work-with-me']);
   const COLLECTOR = '/fw-debug/collect';
-  const MAX_EVENTS = 45;
+  const MAX_EVENTS = 55;
+  const READINESS_POLL_MS = 250;
+  const READINESS_POLL_LIMIT_MS = 30000;
   const MAX_AGE_MS = 20 * 60 * 1000;
   const STALL_FLUSH_MS = 8000;
 
@@ -145,6 +147,7 @@
     // Missing entries mean "not observed", never proven failure or non-request.
     const MODULE_PATHS = [
       ['core_main', 'core/main.js'],
+      ['di_container', 'core/di-container.js'],
       ['modules_config', 'configs/modules.inc.js'],
       ['helpers', 'modules/helpers.js'],
       ['sessionlogger', 'modules/sessionlogger.js'],
@@ -175,8 +178,55 @@
           http_status: boundedMs(entry?.responseStatus),
           start_ms: boundedMs(entry?.startTime),
           duration_ms: boundedMs(entry?.duration),
+          request_ms: boundedMs(entry?.requestStart),
+          response_ms: boundedMs(entry?.responseStart),
+          end_ms: boundedMs(entry?.responseEnd),
+          queue_ms: entry?.requestStart > 0
+            ? boundedMs(entry.requestStart - entry.startTime) : 0,
+          ttfb_ms: entry?.requestStart > 0 && entry.responseStart > 0
+            ? boundedMs(entry.responseStart - entry.requestStart) : 0,
+          download_ms: entry?.responseStart > 0
+            ? boundedMs(entry.responseEnd - entry.responseStart) : 0,
+          transfer_bytes: boundedMs(entry?.transferSize),
+          encoded_bytes: boundedMs(entry?.encodedBodySize),
+          initiator: entry?.initiatorType || 'unknown',
+          delivery: entry?.deliveryType || 'unknown',
         });
       }
+    };
+    // Observe first SendIt readiness without depending on si:init propagation.
+    // Read-only polling; no waiting, DOM writes, imports, or form changes.
+    let loadAt = null;
+    let readyPoll = null;
+    let readyLimit = null;
+    let readySeen = false;
+    const observeReady = () => {
+      if (readySeen || !hasSendIt()) return;
+      readySeen = true;
+      const now = performance.now();
+      report('sendit_ready', {
+        state: document.readyState,
+        ready_ms: boundedMs(now),
+        since_load_ms: loadAt === null ? 0 : boundedMs(now - loadAt),
+      });
+      clearInterval(readyPoll);
+      clearTimeout(readyLimit);
+    };
+    readyPoll = setInterval(observeReady, READINESS_POLL_MS);
+    readyLimit = setTimeout(() => clearInterval(readyPoll), READINESS_POLL_LIMIT_MS);
+
+    const navigationSnapshot = () => {
+      const nav = performance.getEntriesByType('navigation')[0];
+      if (!nav) return;
+      report('navigation_probe', {
+        nav_type: nav.type || 'unknown',
+        nav_total_ms: boundedMs(performance.now()),
+        nav_ttfb_ms: nav.requestStart > 0
+          ? boundedMs(nav.responseStart - nav.requestStart) : 0,
+        nav_download_ms: nav.responseStart > 0
+          ? boundedMs(nav.responseEnd - nav.responseStart) : 0,
+        nav_transfer_bytes: boundedMs(nav.transferSize),
+      });
     };
     const scheduleStallFlush = () => {
       clearTimeout(stallTimer);
@@ -187,9 +237,12 @@
     document.addEventListener('readystatechange', () => snapshot('ready_state'));
     document.addEventListener('DOMContentLoaded', () => snapshot('dom_ready'), { once: true });
     window.addEventListener('load', () => {
+      loadAt = performance.now();
       snapshot('window_load');
       assetSnapshot('load');
+      navigationSnapshot();
       moduleSnapshot('load');
+      observeReady();
     }, { once: true });
 
     const observedInit = new WeakSet();
@@ -197,6 +250,7 @@
       if (observedInit.has(event)) return;
       observedInit.add(event);
       snapshot('si_init');
+      observeReady();
     };
     document.addEventListener('si:init', onInit, true);
     window.addEventListener('si:init', onInit, true);
@@ -211,6 +265,7 @@
         sendit: hasSendIt(),
         cancelled: event.defaultPrevented,
       });
+      observeReady();
       assetSnapshot('submit');
       moduleSnapshot('submit');
       scheduleStallFlush();
@@ -296,6 +351,8 @@
     window.addEventListener('pagehide', event => {
       report('pagehide', { persisted: Boolean(event.persisted) });
       clearTimeout(stallTimer);
+      clearInterval(readyPoll);
+      clearTimeout(readyLimit);
       flush();
     });
 
