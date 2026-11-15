@@ -124,6 +124,7 @@ $events = [
     'dom_ready',
     'window_load',
     'asset_probe',
+    'module_probe',
     'si_init',
     'submit_capture',
     'submit_bubble',
@@ -182,6 +183,11 @@ $fields = [
     'index_module',
     'index_resource',
     'index_status',
+    'module',
+    'observed',
+    'http_status',
+    'start_ms',
+    'duration_ms',
     'persisted',
 ];
 

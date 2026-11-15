@@ -20,7 +20,7 @@ FW Submit Trace — временная диагностика SendIt / FormWatch
 4. Настройки MODX: fw_debug_enabled = 1; fw_debug_token = 48 hex символов.
    Очистить кэш MODX.
 5. Подключить до SendIt, без async/defer:
-   <script src="/assets/js/fw-submit-trace.js?v=2"></script>
+   <script src="/assets/js/fw-submit-trace.js?v=3"></script>
    Проверить, что в браузере загрузилась новая версия файла.
 
 Трассировка автоматически включается ТОЛЬКО для /ru/work-with-me и
@@ -34,6 +34,8 @@ FW Submit Trace — временная диагностика SendIt / FormWatch
   si_send_before/after/success/error/finish
   script_error, runtime_error, promise_rejection, pagehide
   asset_probe — два наблюдения: state=load и state=submit
+  module_probe — девять безопасных записей на каждом этапе (load/submit)
+    о последовательности импортов SendIt, без запросов или чтения ответа
 
 asset_probe:
   index_tag       true/false — есть ли <script src=".../sendit/js/web/index.js">
@@ -46,6 +48,27 @@ asset_probe:
   index_status=0 и index_resource=false НЕ доказывают, что запроса не было.
   Resource Timing может не содержать responseStatus; статус 200 не
   подтверждает выполнение кода. index_module=false сам по себе не дефект.
+
+module_probe (два момента наблюдения, load и submit):
+  state          load / submit
+  module         core_main, modules_config, helpers, sessionlogger,
+                 proofofwork, behaviorsign, sending, notify, saveformdata
+  observed       есть ли завершённая Resource Timing запись для модуля
+  http_status    ResourceTiming.responseStatus или 0 (0 = нет данных!)
+  start_ms       начало запроса по Performance Timeline (ms), 0 если неизвестно
+  duration_ms    длительность по Resource Timing (ms), 0 если неизвестно
+
+  Модуль определяется по точному pathname внутри /assets/components/
+  sendit/js/web/; query-параметры версии игнорируются. Некоторые модули
+  могут не загружаться в зависимости от конфигурации конкретного сайта.
+  Отсутствующая запись НЕ доказывает, что файл не запрашивался:
+  запрос может быть незавершён или Resource Timing недоступен.
+  HTTP 200 означает только получение ответа, но не выполнение модуля.
+  Подмена console.error запрещена как вмешательство в сайт. Ошибки,
+  перехваченные SendIt внутри _initModule(), нужно смотреть в браузерной
+  консоли или отдельном Worker console trace. Content-Type/MIME нельзя
+  достоверно узнать из Resource Timing; проверить через Network headers.
+  Сравнивать успешные и неуспешные прогоны по (trace, state, module).
 
 Логи:
   grep '\[FW TRACE' core/cache/logs/error.log | tail -n 120
