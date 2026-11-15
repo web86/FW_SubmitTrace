@@ -141,6 +141,43 @@
         sendit: hasSendIt()
       });
     };
+    // Passive browser Resource Timing samples: no import(), fetch(), or HTML edits.
+    // Missing entries mean "not observed", never proven failure or non-request.
+    const MODULE_PATHS = [
+      ['core_main', 'core/main.js'],
+      ['modules_config', 'configs/modules.inc.js'],
+      ['helpers', 'modules/helpers.js'],
+      ['sessionlogger', 'modules/sessionlogger.js'],
+      ['proofofwork', 'modules/proofofwork.js'],
+      ['behaviorsign', 'modules/behaviorsign.js'],
+      ['sending', 'modules/sending.js'],
+      ['notify', 'modules/notify.js'],
+      ['saveformdata', 'modules/saveformdata.js'],
+    ];
+    const boundedMs = value => Number.isFinite(value)
+      ? Math.min(600000, Math.max(0, Math.round(value))) : 0;
+    const moduleSnapshot = stage => {
+      const resources = performance.getEntriesByType('resource');
+      const prefix = '/assets/components/sendit/js/web/';
+      for (const [module, relativePath] of MODULE_PATHS) {
+        const path = prefix + relativePath;
+        // Repeated entries are possible; use the last completed one.
+        let entry;
+        for (const candidate of resources) {
+          try {
+            if (new URL(candidate.name).pathname === path) entry = candidate;
+          } catch { /* Ignore malformed browser performance entries. */ }
+        }
+        report('module_probe', {
+          state: stage,
+          module,
+          observed: Boolean(entry),
+          http_status: boundedMs(entry?.responseStatus),
+          start_ms: boundedMs(entry?.startTime),
+          duration_ms: boundedMs(entry?.duration),
+        });
+      }
+    };
     const scheduleStallFlush = () => {
       clearTimeout(stallTimer);
       // If submit is intercepted but no si:send:finish ever fires, capture it.
@@ -152,6 +189,7 @@
     window.addEventListener('load', () => {
       snapshot('window_load');
       assetSnapshot('load');
+      moduleSnapshot('load');
     }, { once: true });
 
     const observedInit = new WeakSet();
@@ -174,6 +212,7 @@
         cancelled: event.defaultPrevented,
       });
       assetSnapshot('submit');
+      moduleSnapshot('submit');
       scheduleStallFlush();
       queueMicrotask(() => report('submit_microtask', {
         cancelled: event.defaultPrevented,
