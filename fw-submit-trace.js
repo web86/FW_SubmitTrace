@@ -149,7 +149,10 @@
 
     document.addEventListener('readystatechange', () => snapshot('ready_state'));
     document.addEventListener('DOMContentLoaded', () => snapshot('dom_ready'), { once: true });
-    window.addEventListener('load', () => snapshot('window_load'), { once: true });
+    window.addEventListener('load', () => {
+      snapshot('window_load');
+      assetSnapshot('load');
+    }, { once: true });
 
     const observedInit = new WeakSet();
     const onInit = event => {
@@ -170,6 +173,7 @@
         sendit: hasSendIt(),
         cancelled: event.defaultPrevented,
       });
+      assetSnapshot('submit');
       scheduleStallFlush();
       queueMicrotask(() => report('submit_microtask', {
         cancelled: event.defaultPrevented,
