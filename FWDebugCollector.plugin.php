@@ -1,63 +1,213 @@
 <?php
-/** Temporary MODX 3 plugin. Event: OnMODXInit. Delete after investigation. */
-if (($modx->event->name ?? '') !== 'OnMODXInit') return;
-if (!$modx->getOption('fw_debug_enabled', null, false)) return;
+/**
+ * FWDebugCollector — MODX Revolution 2.8.x
+ *
+ * Event: OnMODXInit
+ * Temporary diagnostic plugin.
+ * Remove or disable after investigation.
+ */
 
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$trace = (string)($_COOKIE['fw_trace'] ?? '');
-$validTrace = (bool)preg_match('/^[a-f0-9]{32}$/i', $trace);
-
-if ($path !== '/fw-debug/collect') {
-    if ($validTrace && in_array($path, [
-        '/ru/work-with-me', '/work-with-me', '/assets/components/sendit/action.php'
-    ], true)) {
-        $modx->log(1, '[FW TRACE HTTP] ' . json_encode([
-            'trace' => $trace, 'method' => $method, 'path' => $path,
-            'envelope' => isset($_SERVER['HTTP_X_FORMWATCH_ENVELOPE']),
-        ], JSON_UNESCAPED_SLASHES));
-    }
+if (!isset($modx) || !($modx instanceof modX)) {
     return;
 }
 
+if (!isset($modx->event)
+    || $modx->event->name !== 'OnMODXInit') {
+    return;
+}
+
+$enabled = filter_var(
+    $modx->getOption('fw_debug_enabled', null, '0'),
+    FILTER_VALIDATE_BOOLEAN
+);
+
+if (!$enabled) {
+    return;
+}
+
+$path = parse_url(
+    $_SERVER['REQUEST_URI'] ?? '/',
+    PHP_URL_PATH
+) ?: '/';
+
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+$traceCookie = (string)($_COOKIE['fw_trace'] ?? '');
+$validTrace = (bool)preg_match(
+    '/^[a-f0-9]{32}$/i',
+    $traceCookie
+);
+
+// Record correlated HTTP requests.
+if ($path !== '/fw-debug/collect') {
+    if ($validTrace && in_array($path, [
+        '/ru/work-with-me',
+        '/work-with-me',
+        '/assets/components/sendit/action.php',
+    ], true)) {
+        $modx->log(
+            modX::LOG_LEVEL_ERROR,
+            '[FW TRACE HTTP] ' . json_encode([
+                'trace' => $traceCookie,
+                'method' => $method,
+                'path' => $path,
+                'envelope' => isset(
+                    $_SERVER['HTTP_X_FORMWATCH_ENVELOPE']
+                ),
+            ], JSON_UNESCAPED_SLASHES)
+        );
+    }
+
+    return;
+}
+
+// Collector endpoint.
 header('Cache-Control: no-store');
 header('Content-Type: text/plain; charset=utf-8');
-if ($method !== 'POST') { http_response_code(405); exit; }
-if (($_SERVER['HTTP_SEC_FETCH_SITE'] ?? 'same-origin') !== 'same-origin') {
-    http_response_code(403); exit;
+
+if ($method !== 'POST') {
+    http_response_code(405);
+    exit;
 }
+
+$fetchSite = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+
+if ($fetchSite !== '' && $fetchSite !== 'same-origin') {
+    http_response_code(403);
+    exit;
+}
+
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if ($origin && $origin !== 'https://web86.site') { http_response_code(403); exit; }
-if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 2048) { http_response_code(413); exit; }
-$raw = file_get_contents('php://input', false, null, 0, 2049);
-if (strlen($raw) > 2048) { http_response_code(413); exit; }
-$payload = json_decode($raw, true);
-$secret = (string)$modx->getOption('fw_debug_token', null, '');
-if (!is_array($payload) || !preg_match('/^[a-f0-9]{48}$/i', $secret) ||
-    !is_string($payload['token'] ?? null) || !hash_equals($secret, $payload['token'])) {
-    http_response_code(403); exit;
+
+if ($origin !== '' && $origin !== 'https://web86.site') {
+    http_response_code(403);
+    exit;
 }
-$events = ['boot', 'ready_state', 'dom_ready', 'window_load', 'si_init',
-    'submit_capture', 'submit_bubble', 'submit_microtask',
-    'si_send_before', 'si_send_after', 'si_send_success', 'si_send_error',
-    'si_send_finish', 'script_error', 'pagehide'];
+
+if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 2048) {
+    http_response_code(413);
+    exit;
+}
+
+$raw = file_get_contents(
+    'php://input',
+    false,
+    null,
+    0,
+    2049
+);
+
+if ($raw === false || strlen($raw) > 2048) {
+    http_response_code(413);
+    exit;
+}
+
+$payload = json_decode($raw, true);
+
+$secret = (string)$modx->getOption(
+    'fw_debug_token',
+    null,
+    ''
+);
+
+if (!is_array($payload)
+    || !preg_match('/^[a-f0-9]{48}$/i', $secret)
+    || !is_string($payload['token'] ?? null)
+    || !hash_equals($secret, $payload['token'])) {
+    http_response_code(403);
+    exit;
+}
+
+$events = [
+    'boot',
+    'ready_state',
+    'dom_ready',
+    'window_load',
+    'si_init',
+    'submit_capture',
+    'submit_bubble',
+    'submit_microtask',
+    'si_send_before',
+    'si_send_after',
+    'si_send_success',
+    'si_send_error',
+    'si_send_finish',
+    'script_error',
+    'runtime_error',       // новое
+    'promise_rejection',   // новое
+    'pagehide',
+];
+
 $event = (string)($payload['event'] ?? '');
 $traceId = (string)($payload['trace'] ?? '');
-if (!in_array($event, $events, true) || !preg_match('/^[a-f0-9]{32}$/i', $traceId)) {
-    http_response_code(400); exit;
+
+if (!in_array($event, $events, true)
+    || !preg_match('/^[a-f0-9]{32}$/i', $traceId)) {
+    http_response_code(400);
+    exit;
 }
-// Strict allowlist: never record tokens, form fields, query strings or request bodies.
-$safe = ['trace' => $traceId, 'event' => $event];
-foreach (['ms','page','state','method','action','preset','sendit','form',
-    'scripts','cancelled','accepted','script','persisted'] as $key) {
-    $v = $payload[$key] ?? null;
-    if (is_bool($v) || (is_int($v) && $v >= 0 && $v <= 600000)) {
-        $safe[$key] = $v;
-    } elseif (is_string($v) && strlen($v) <= 128 &&
-        preg_match('~^[a-zA-Z0-9_./:-]+$~', $v)) {
-        $safe[$key] = $v;
+
+// The JS tracer must set fw_trace with Path=/
+// before sending diagnostic events.
+if (!$validTrace
+    || !hash_equals(
+        strtolower($traceCookie),
+        strtolower($traceId)
+    )) {
+    http_response_code(403);
+    exit;
+}
+
+// Strict diagnostic field allowlist.
+$safe = [
+    'trace' => $traceId,
+    'event' => $event,
+];
+
+$fields = [
+    'ms',
+    'page',
+    'state',
+    'method',
+    'action',
+    'preset',
+    'sendit',
+    'form',
+    'scripts',
+    'cancelled',
+    'accepted',
+    'script',
+    'persisted',
+];
+
+foreach ($fields as $key) {
+    $value = $payload[$key] ?? null;
+
+    if (is_bool($value)) {
+        $safe[$key] = $value;
+    } elseif (is_int($value)
+        && $value >= 0
+        && $value <= 600000) {
+        $safe[$key] = $value;
+    } elseif (is_string($value)
+        && strlen($value) <= 128
+        && preg_match(
+            '~^[a-zA-Z0-9_./:-]+$~',
+            $value
+        )) {
+        // Only predefined diagnostic labels/paths
+        // should be emitted by the JS tracer.
+        $safe[$key] = $value;
     }
 }
-$modx->log(1, '[FW TRACE JS] ' . json_encode($safe, JSON_UNESCAPED_SLASHES));
+
+$modx->log(
+    modX::LOG_LEVEL_ERROR,
+    '[FW TRACE JS] ' . json_encode(
+        $safe,
+        JSON_UNESCAPED_SLASHES
+    )
+);
+
 http_response_code(204);
 exit;
