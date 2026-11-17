@@ -127,7 +127,7 @@
       for (const value of urls) {
         try {
           const p = new URL(value, location.href).pathname;
-          if (/\\/sendit\\/js\\/web\\/index\\.js$/i.test(p)) return p;
+          if (/\/sendit\/js\/web\/index\.js$/i.test(p)) return p;
         } catch { /* Ignore malformed URLs. */ }
       }
       return '/assets/components/sendit/js/web/index.js';
@@ -180,7 +180,7 @@
       ? Math.min(600000, Math.max(0, Math.round(value))) : 0;
     const moduleSnapshot = stage => {
       const resources = performance.getEntriesByType('resource');
-      const prefix = discoverIndexPath().replace(/index\\.js$/, '');
+      const prefix = discoverIndexPath().replace(/index\.js$/, '');
       for (const [module, relativePath] of MODULE_PATHS) {
         const path = prefix + relativePath;
         // Repeated entries are possible; use the last completed one.
