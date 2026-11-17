@@ -23,7 +23,7 @@
   const TARGET_SELECTOR = typeof CONFIG.selector === 'string' && CONFIG.selector.trim()
     ? CONFIG.selector : 'form[data-si-form], form[data-si-preset]';
   const PAGES = Array.isArray(CONFIG.paths) && CONFIG.paths.length
-    ? new Set(CONFIG.paths.map(p => p === '/' ? '/' : String(p).replace(/\\/+$/, '')))
+    ? new Set(CONFIG.paths.map(p => p === '/' ? '/' : String(p).replace(/\/+$/, '')))
     : null;
   const safeLabel = value => String(value || 'unknown')
     .replace(/[^a-zA-Z0-9_./:-]/g, '_').slice(0, 120);
