@@ -32,6 +32,14 @@ $path = parse_url(
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+$normalizePath = static function ($raw) {
+    $path = parse_url((string)$raw, PHP_URL_PATH);
+    if (!is_string($path) || $path === '') return '';
+    return $path === '/' ? '/' : rtrim($path, '/');
+};
+$path = $normalizePath($path);
+$allowedPaths = array_filter(array_map($normalizePath,
+    explode(',', (string)$modx->getOption('fw_debug_paths', null, ''))));
 $traceCookie = (string)($_COOKIE['fw_trace'] ?? '');
 $validTrace = (bool)preg_match(
     '/^[a-f0-9]{32}$/i',
@@ -40,11 +48,8 @@ $validTrace = (bool)preg_match(
 
 // Record correlated HTTP requests.
 if ($path !== '/fw-debug/collect') {
-    if ($validTrace && in_array($path, [
-        '/ru/work-with-me',
-        '/work-with-me',
-        '/assets/components/sendit/action.php',
-    ], true)) {
+    if ($validTrace && (in_array($path, $allowedPaths, true)
+        || preg_match('~/sendit/action\\.php$~i', $path))) {
         $modx->log(
             modX::LOG_LEVEL_ERROR,
             '[FW TRACE HTTP] ' . json_encode([
@@ -79,7 +84,21 @@ if ($fetchSite !== '' && $fetchSite !== 'same-origin') {
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
-if ($origin !== '' && $origin !== 'https://web86.site') {
+// Same-origin validation, without hardcoding a customer's domain.
+$originSetting = trim((string)$modx->getOption('fw_debug_origin', null, ''));
+if ($originSetting === '') {
+    $originSetting = (string)$modx->getOption('site_url', null, '');
+}
+$originParts = parse_url($originSetting);
+if (!is_array($originParts) || empty($originParts['scheme'])
+    || empty($originParts['host'])
+    || !in_array(strtolower($originParts['scheme']), ['https', 'http'], true)) {
+    http_response_code(403);
+    exit;
+}
+$expectedOrigin = strtolower($originParts['scheme']) . '://' . strtolower($originParts['host'])
+    . (isset($originParts['port']) ? ':' . $originParts['port'] : '');
+if ($origin !== '' && strtolower($origin) !== $expectedOrigin) {
     http_response_code(403);
     exit;
 }
