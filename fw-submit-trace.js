@@ -1,10 +1,10 @@
 /*
- * TEMPORARY SendIt diagnostic tracer — web86.site, MODX 2 / SendIt 2.8.6.
+ * TEMPORARY portable SendIt diagnostic tracer — MODX 2 / SendIt 2.8.x.
  * Include synchronously in <head> BEFORE SendIt JavaScript.
- * Automatically active ONLY on /ru/work-with-me and /work-with-me.
+ * Active on any page where included; optional config.paths limits exact URLs.
  *
  * TEMPORARY AUTH CONTRACT:
- *   DEBUG_TOKEN must equal MODX system setting fw_debug_token (48 hex chars).
+ *   window.FW_TRACE_CONFIG.token must equal fw_debug_token (48 hex chars).
  *   MODX setting fw_debug_enabled must be 1.
  *   The existing FWDebugCollector is attached to OnMODXInit and handles
  *   POST /fw-debug/collect with a single event per request.
@@ -16,20 +16,28 @@
 (() => {
   'use strict';
 
-  // Replace with the same temporary 48-character hex token as fw_debug_token.
-  // This temporary key is visible to visitors in JavaScript: rotate it later.
-  const DEBUG_TOKEN = 'de842ba1779ccc9ee5e9dfaca4d533d8a51e6a3192cc2255';
-  const TARGET_SELECTOR = '[data-si-form="W86CooperationRu"][data-si-preset="w86_cooperation_ru"]';
-  const PAGES = new Set(['/ru/work-with-me', '/work-with-me']);
+  // Configure in the template BEFORE this JS: window.FW_TRACE_CONFIG = {token:'<48 hex>'};
+  // Tokens in client JS are public: keep temporary and rotate after diagnosis.
+  const CONFIG = window.FW_TRACE_CONFIG || {};
+  const DEBUG_TOKEN = String(CONFIG.token || '');
+  const TARGET_SELECTOR = typeof CONFIG.selector === 'string' && CONFIG.selector.trim()
+    ? CONFIG.selector : 'form[data-si-form], form[data-si-preset]';
+  const PAGES = Array.isArray(CONFIG.paths) && CONFIG.paths.length
+    ? new Set(CONFIG.paths.map(p => p === '/' ? '/' : String(p).replace(/\\/+$/, '')))
+    : null;
+  const safeLabel = value => String(value || 'unknown')
+    .replace(/[^a-zA-Z0-9_./:-]/g, '_').slice(0, 120);
   const COLLECTOR = '/fw-debug/collect';
-  const MAX_EVENTS = 55;
+  const MAX_EVENTS = 65;
   const READINESS_POLL_MS = 250;
   const READINESS_POLL_LIMIT_MS = 30000;
   const MAX_AGE_MS = 20 * 60 * 1000;
   const STALL_FLUSH_MS = 8000;
 
   try {
-    if (!PAGES.has(location.pathname) || location.protocol !== 'https:') return;
+    if (location.protocol !== 'https:') return;
+    if (PAGES && !PAGES.has(location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, ''))) return;
+    try { document.querySelector(TARGET_SELECTOR); } catch { console.warn('[FW TRACE] invalid selector'); return; }
     if (!/^[a-f0-9]{48}$/i.test(DEBUG_TOKEN)) {
       console.warn('[FW TRACE] set temporary DEBUG_TOKEN (48 hex chars)');
       return;
@@ -97,7 +105,7 @@
       const item = {
         trace, event,
         ms: Math.min(600000, Math.max(0, Math.round(performance.now()))),
-        page: location.pathname,
+        page: safeLabel(location.pathname),
         ...details,
       };
       pending.push(item);
@@ -113,8 +121,19 @@
       form: Boolean(currentForm()),
       scripts: Math.min(600000, scriptCount()),
     });
+    const discoverIndexPath = () => {
+      const urls = [...document.scripts].map(s => s.src)
+        .concat(performance.getEntriesByType('resource').map(e => e.name));
+      for (const value of urls) {
+        try {
+          const p = new URL(value, location.href).pathname;
+          if (/\\/sendit\\/js\\/web\\/index\\.js$/i.test(p)) return p;
+        } catch { /* Ignore malformed URLs. */ }
+      }
+      return '/assets/components/sendit/js/web/index.js';
+    };
     const assetSnapshot = stage => {
-      const indexPath = '/assets/components/sendit/js/web/index.js';
+      const indexPath = discoverIndexPath();
     
       const indexTag = [...document.scripts].find(el => {
         try {
@@ -161,7 +180,7 @@
       ? Math.min(600000, Math.max(0, Math.round(value))) : 0;
     const moduleSnapshot = stage => {
       const resources = performance.getEntriesByType('resource');
-      const prefix = '/assets/components/sendit/js/web/';
+      const prefix = discoverIndexPath().replace(/index\\.js$/, '');
       for (const [module, relativePath] of MODULE_PATHS) {
         const path = prefix + relativePath;
         // Repeated entries are possible; use the last completed one.
@@ -261,7 +280,7 @@
       report('submit_capture', {
         method: methodOf(form),
         action: actionKind(form),
-        preset: 'w86_cooperation_ru',
+        preset: safeLabel(form.getAttribute('data-si-preset') || 'none'),
         sendit: hasSendIt(),
         cancelled: event.defaultPrevented,
       });
@@ -294,7 +313,7 @@
         const detail = event.detail || {};
         const candidate = detail.target || detail.form || detail.element || event.target;
         const form = getForm(candidate);
-        if (!form && candidate instanceof Element && candidate !== document) return;
+        if (!form) return;
         const success = detail.result?.success;
         report(label, {
           form: Boolean(form),
